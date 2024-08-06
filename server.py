@@ -5,16 +5,16 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from datetime import datetime, timedelta
 
-# 创建FastAPI实例
+#create FastAPI instance
 app = FastAPI()
 
-# 创建数据库引擎
+# create database
 DATABASE_URL = "sqlite:///./InternDatabase.db"
 engine = create_engine(DATABASE_URL, echo=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# 定义数据库模型
+# define the database's data model
 class User(Base):
     __tablename__ = 'users'
     UserId = Column(Integer, primary_key=True, autoincrement=True)
@@ -47,10 +47,10 @@ class Recipe(Base):
     RecipeCategory = Column(String, nullable=True)
     RecipeURL = Column(String, nullable=True)
 
-# 创建数据库表
+# create the table 
 Base.metadata.create_all(bind=engine)
 
-# Pydantic模型
+# Pydantic Model,this can validate the data from API
 class UserCreate(BaseModel):
     UserName: str
     Password: str
@@ -104,7 +104,7 @@ class UserStocksItems(BaseModel):
     class Config:
         orm_mode = True
         from_attributes = True
-# 依赖项
+
 def get_db():
     db = SessionLocal()
     try:
@@ -112,7 +112,8 @@ def get_db():
     finally:
         db.close()
 
-# 路由
+
+
 @app.post("/users/", response_model=UserCreate)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db_user = User(**user.model_dump())
