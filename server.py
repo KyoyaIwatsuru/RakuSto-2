@@ -4,17 +4,18 @@ from sqlalchemy import create_engine, Column, Integer, String, Date, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from datetime import datetime, timedelta
+import csv
 
-#create FastAPI instance
+# Create FastAPI instance
 app = FastAPI()
 
-# create database
+# Create database
 DATABASE_URL = "sqlite:///./InternDatabase.db"
 engine = create_engine(DATABASE_URL, echo=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# define the database's data model
+# Define the database's data model
 class User(Base):
     __tablename__ = 'users'
     UserId = Column(Integer, primary_key=True, autoincrement=True)
@@ -30,6 +31,7 @@ class Item(Base):
     PurchaseDate = Column(Date, nullable=True)
     LimitDate = Column(Date, nullable=True)
     Unit = Column(Integer, nullable=True)
+    ItemURL = Column(String, nullable=True)
     stocks = relationship("Stock", back_populates="item")
 
 class Stock(Base):
@@ -47,10 +49,10 @@ class Recipe(Base):
     RecipeCategory = Column(String, nullable=True)
     RecipeURL = Column(String, nullable=True)
 
-# create the table 
+# Create the table 
 Base.metadata.create_all(bind=engine)
 
-# Pydantic Model,this can validate the data from API
+# Pydantic Model, this can validate the data from API
 class UserCreate(BaseModel):
     UserName: str
     Password: str
@@ -61,11 +63,16 @@ class ItemCreate(BaseModel):
     PurchaseDate: datetime
     LimitDate: datetime
     Unit: int
+    ItemURL: str
 
 class StockCreate(BaseModel):
     UserId: int
     ItemId: int
 
+class RecipeCreate(BaseModel):
+    RecipeTitle: str
+    RecipeCategory: str
+    RecipeURL: str
 
 class UserRead(BaseModel):
     UserId: int
@@ -83,6 +90,7 @@ class ItemRead(BaseModel):
     PurchaseDate: datetime
     LimitDate: datetime
     Unit: int
+    ItemURL: str
 
     class Config:
         orm_mode = True
@@ -92,6 +100,16 @@ class StockRead(BaseModel):
     StockId: int
     UserId: int
     ItemId: int
+
+    class Config:
+        orm_mode = True
+        from_attributes = True
+
+class RecipeRead(BaseModel):
+    RecipeId: int
+    RecipeTitle: str
+    RecipeCategory: str
+    RecipeURL: str
 
     class Config:
         orm_mode = True
@@ -112,9 +130,29 @@ def get_db():
     finally:
         db.close()
 
+# Initialize database with CSV data
+def init_db():
+    db = SessionLocal()
+    try:
+        with open('recipes.csv', 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                recipe = Recipe(
+                    RecipeTitle=row['title'],
+                    RecipeCategory=row['parent_category'],
+                    RecipeURL=row['link']
+                )
+                db.add(recipe)
+            db.commit()
+    finally:
+        db.close()
 
+# Initialize database with CSV data when FastAPI starts
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
-@app.post("/users/", response_model=UserCreate)
+@app.post("/users/", response_model=UserRead)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db_user = User(**user.model_dump())
     db.add(db_user)
@@ -122,7 +160,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db.refresh(db_user)
     return db_user
 
-@app.post("/items/", response_model=ItemCreate)
+@app.post("/items/", response_model=ItemRead)
 def create_item(item: ItemCreate, db: Session = Depends(get_db)):
     db_item = Item(**item.model_dump())
     db.add(db_item)
@@ -130,13 +168,22 @@ def create_item(item: ItemCreate, db: Session = Depends(get_db)):
     db.refresh(db_item)
     return db_item
 
-@app.post("/stocks/", response_model=StockCreate)
+@app.post("/stocks/", response_model=StockRead)
 def create_stock(stock: StockCreate, db: Session = Depends(get_db)):
     db_stock = Stock(**stock.model_dump())
     db.add(db_stock)
     db.commit()
     db.refresh(db_stock)
     return db_stock
+
+@app.post("/recipes/", response_model=RecipeRead)
+def create_recipe(recipe: RecipeCreate, db: Session = Depends(get_db)):
+    db_recipe = Recipe(**recipe.model_dump())
+    db.add(db_recipe)
+    db.commit()
+    db.refresh(db_recipe)
+    return db_recipe
+
 @app.get("/users/", response_model=list[UserRead])
 def read_users(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
     users = db.query(User).offset(skip).limit(limit).all()
@@ -151,6 +198,11 @@ def read_items(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
 def read_stocks(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
     stocks = db.query(Stock).offset(skip).limit(limit).all()
     return stocks
+
+@app.get("/recipes/", response_model=list[RecipeRead])
+def read_recipes(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    recipes = db.query(Recipe).offset(skip).limit(limit).all()
+    return recipes
 
 @app.get("/users/{user_id}", response_model=UserRead)
 def read_user(user_id: int, db: Session = Depends(get_db)):
@@ -172,6 +224,7 @@ def read_stock(stock_id: int, db: Session = Depends(get_db)):
     if stock is None:
         raise HTTPException(status_code=404, detail="Stock not found")
     return stock
+
 @app.get("/users/{user_id}/stocks-items", response_model=list[UserStocksItems])
 def read_user_stocks_items(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.UserId == user_id).first()
@@ -184,5 +237,6 @@ def read_user_stocks_items(user_id: int, db: Session = Depends(get_db)):
         item = db.query(Item).filter(Item.ItemId == stock.ItemId).first()
         results.append(UserStocksItems(StockId=stock.StockId, Item=ItemRead.model_validate(item)))
     return results
+
 # 启动命令（放在命令行中运行）
 # uvicorn your_script_name:app --reload 
