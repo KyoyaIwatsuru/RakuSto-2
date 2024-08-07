@@ -1,9 +1,9 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Body
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Date, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
-from datetime import datetime, timedelta
+from datetime import datetime
 import csv
 
 # Create FastAPI instance
@@ -21,32 +21,27 @@ class User(Base):
     UserId = Column(Integer, primary_key=True, autoincrement=True)
     UserName = Column(String, nullable=True)
     Password = Column(String, nullable=True)
-    stocks = relationship("Stock", back_populates="user")
+    items = relationship("Item", back_populates="user")
 
 class Item(Base):
     __tablename__ = 'items'
     ItemId = Column(Integer, primary_key=True, autoincrement=True)
     ItemName = Column(String, nullable=True)
+    ItemImage = Column(String, nullable=True)
     Category = Column(String, nullable=True)
     PurchaseDate = Column(Date, nullable=True)
     LimitDate = Column(Date, nullable=True)
     Unit = Column(Integer, nullable=True)
     ItemURL = Column(String, nullable=True)
-    stocks = relationship("Stock", back_populates="item")
-
-class Stock(Base):
-    __tablename__ = 'stocks'
-    StockId = Column(Integer, primary_key=True, autoincrement=True)
-    UserId = Column(Integer, ForeignKey('users.UserId'), nullable=True)
-    ItemId = Column(Integer, ForeignKey('items.ItemId'), nullable=True)
-    user = relationship("User", back_populates="stocks")
-    item = relationship("Item", back_populates="stocks")
+    UserId = Column(Integer, ForeignKey('users.UserId'), nullable=False)
+    user = relationship("User", back_populates="items")
 
 class Recipe(Base):
     __tablename__ = 'recipes'
     RecipeId = Column(Integer, primary_key=True, autoincrement=True)
     RecipeTitle = Column(String, nullable=True)
     RecipeCategory = Column(String, nullable=True)
+    RecipeImageURL = Column(String, nullable=True)
     RecipeURL = Column(String, nullable=True)
 
 # Create the table 
@@ -59,15 +54,13 @@ class UserCreate(BaseModel):
 
 class ItemCreate(BaseModel):
     ItemName: str
+    ItemImage: str
     Category: str
     PurchaseDate: datetime
     LimitDate: datetime
     Unit: int
     ItemURL: str
-
-class StockCreate(BaseModel):
     UserId: int
-    ItemId: int
 
 class RecipeCreate(BaseModel):
     RecipeTitle: str
@@ -86,20 +79,13 @@ class UserRead(BaseModel):
 class ItemRead(BaseModel):
     ItemId: int
     ItemName: str
+    ItemImage: str
     Category: str
     PurchaseDate: datetime
     LimitDate: datetime
     Unit: int
     ItemURL: str
-
-    class Config:
-        orm_mode = True
-        from_attributes = True
-
-class StockRead(BaseModel):
-    StockId: int
     UserId: int
-    ItemId: int
 
     class Config:
         orm_mode = True
@@ -110,14 +96,20 @@ class RecipeRead(BaseModel):
     RecipeTitle: str
     RecipeCategory: str
     RecipeURL: str
+    RecipeImageURL: str
 
     class Config:
         orm_mode = True
         from_attributes = True
 
-class UserStocksItems(BaseModel):
-    StockId: int
-    Item: ItemRead
+class UserItems(BaseModel):
+    ItemId: int
+    ItemName: str
+    Category: str
+    PurchaseDate: datetime
+    LimitDate: datetime
+    Unit: int
+    ItemURL: str
 
     class Config:
         orm_mode = True
@@ -140,7 +132,8 @@ def init_db():
                 recipe = Recipe(
                     RecipeTitle=row['title'],
                     RecipeCategory=row['parent_category'],
-                    RecipeURL=row['link']
+                    RecipeURL=row['link'],
+                    RecipeImageURL=row['image_url']
                 )
                 db.add(recipe)
             db.commit()
@@ -154,7 +147,7 @@ def on_startup():
 
 @app.post("/users/", response_model=UserRead)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
-    db_user = User(**user.model_dump())
+    db_user = User(**user.dict())
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
@@ -162,45 +155,36 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/items/", response_model=ItemRead)
 def create_item(item: ItemCreate, db: Session = Depends(get_db)):
-    db_item = Item(**item.model_dump())
+    db_item = Item(**item.dict())
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
     return db_item
 
-@app.post("/stocks/", response_model=StockRead)
-def create_stock(stock: StockCreate, db: Session = Depends(get_db)):
-    db_stock = Stock(**stock.model_dump())
-    db.add(db_stock)
-    db.commit()
-    db.refresh(db_stock)
-    return db_stock
+@app.post("/users/{user_id}/items/", response_model=ItemRead)
+def add_item_to_user(user_id: int, item: ItemCreate = Body(...), db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.UserId == user_id).first()
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
 
-@app.post("/recipes/", response_model=RecipeRead)
-def create_recipe(recipe: RecipeCreate, db: Session = Depends(get_db)):
-    db_recipe = Recipe(**recipe.model_dump())
-    db.add(db_recipe)
+    db_item = Item(**item.dict(), UserId=user_id)
+    db.add(db_item)
     db.commit()
-    db.refresh(db_recipe)
-    return db_recipe
+    db.refresh(db_item)
+    return db_item
 
 @app.get("/users/", response_model=list[UserRead])
-def read_users(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+def read_users(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     users = db.query(User).offset(skip).limit(limit).all()
     return users
 
 @app.get("/items/", response_model=list[ItemRead])
-def read_items(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+def read_items(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     items = db.query(Item).offset(skip).limit(limit).all()
     return items
 
-@app.get("/stocks/", response_model=list[StockRead])
-def read_stocks(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
-    stocks = db.query(Stock).offset(skip).limit(limit).all()
-    return stocks
-
 @app.get("/recipes/", response_model=list[RecipeRead])
-def read_recipes(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+def read_recipes(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     recipes = db.query(Recipe).offset(skip).limit(limit).all()
     return recipes
 
@@ -218,25 +202,14 @@ def read_item(item_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Item not found")
     return item
 
-@app.get("/stocks/{stock_id}", response_model=StockRead)
-def read_stock(stock_id: int, db: Session = Depends(get_db)):
-    stock = db.query(Stock).filter(Stock.StockId == stock_id).first()
-    if stock is None:
-        raise HTTPException(status_code=404, detail="Stock not found")
-    return stock
-
-@app.get("/users/{user_id}/stocks-items", response_model=list[UserStocksItems])
-def read_user_stocks_items(user_id: int, db: Session = Depends(get_db)):
+@app.get("/users/{user_id}/items", response_model=list[UserItems])
+def read_user_items(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.UserId == user_id).first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     
-    stocks = db.query(Stock).filter(Stock.UserId == user_id).all()
-    results = []
-    for stock in stocks:
-        item = db.query(Item).filter(Item.ItemId == stock.ItemId).first()
-        results.append(UserStocksItems(StockId=stock.StockId, Item=ItemRead.model_validate(item)))
-    return results
+    items = user.items
+    return items
 
 # 启动命令（放在命令行中运行）
-# uvicorn your_script_name:app --reload 
+# uvicorn your_script_name:app --reload
