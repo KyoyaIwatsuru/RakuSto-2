@@ -283,3 +283,27 @@ def delete_item(item_id:int, db: Session = Depends(get_db)):
 def read_items(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     items = db.query(Item).offset(skip).limit(limit).all()
     return items
+
+
+
+class ItemAdmin(BaseModel):
+    Unit: int
+    PurchaseDate:datetime
+    LimitDate:datetime
+    
+# 4
+@app.post("/admin/{item_id}")
+def change_item_admin(item_id: int, item: ItemAdmin, db: Session = Depends(get_db)):
+    try:
+        pre_item = db.query(Item).filter(Item.ItemId == item_id).first()
+        if pre_item is None:
+            raise HTTPException(status_code=404, detail="Item not found")
+        pre_item.Unit = item.Unit
+        pre_item.PurchaseDate = item.PurchaseDate
+        pre_item.LimitDate = item.LimitDate
+        db.commit()
+        db.refresh(pre_item)
+        return None
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
